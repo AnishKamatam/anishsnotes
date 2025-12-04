@@ -1,19 +1,17 @@
 ---
 title: Welcome to Anish's Notes
 ---
+## Welcome to Anish’s Notes
 
-Welcome to my digital garden! 🌱
+Hi, I’m Anish.  
+I’m a CS + Math student who loves working on systems, AI, and robotics. Most of my time goes into building things from scratch - backend infrastructure, ML pipelines, autonomous drone platforms, agentic systems - and trying to actually understand how they work under the hood.
 
-This is where I share my thoughts, learnings, and notes. Feel free to explore!
+I’ve worked across research and industry:
+- Cloud robotics + distributed systems research at Berkeley  
+- AI/ML engineering at startups  
+- Building autonomous wildfire-detection drones  
+- Full-stack + data engineering projects
 
-## Getting Started
+This site is just a clean place for me to keep my notes: course breakdowns, concepts I’m learning, explanations I write for myself, and ideas I’m exploring. It’s not meant to be formal, just organized enough to be useful for anyone else reading.
 
-You can write notes in Markdown format in the `content/` folder. Quartz will automatically:
-- Convert them to a beautiful website
-- Create links between related notes using [[wikilinks]]
-- Generate a graph view of your knowledge
-- Enable full-text search
-
-## Example Note
-
-Check out my [[example-note|first note]] to see how it works!
+Feel free to look around and dive into whatever interests you.
