@@ -1,5 +1,5 @@
 ---
-title: Welcome to My Notes
+title: Welcome to Anish's Notes
 ---
 
 Welcome to my digital garden! 🌱
