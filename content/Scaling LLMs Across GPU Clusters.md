@@ -42,12 +42,13 @@ $$
 N = h  \cdot v + L(1/2h^2+1/3h)+2h
 $$
 where: 
-*N* = Total Parameters
-*h* = Hidden Dimensions
-*v* = Vocab Size
-*L* = Number of Layers
+$*N* = Total Parameters$
+$*h* = Hidden Dimensions$
+$*v* = Vocab Size$
+$*L* = Number of Layers$
 
 Here's how that equation breaks down:
+
 **1. Token Embedding Matrix:**
 $$
 h\cdot v
@@ -77,4 +78,6 @@ $$2h$$
 Per layer:
 - LayerNorm scale (γ): `h`
 - LayerNorm bias (β): `h`
+
+
 
