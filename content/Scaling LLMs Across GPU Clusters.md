@@ -113,3 +113,40 @@ Mixed precision doesn't directly reduce memory, it adds 4 bytes of data over ful
 1. Compute the forward/backward passes in half precision
 2. Allows us to use optimized lower precision operations on the GPU, which are faster
 3. Reduces the activation memory requirements during the forward pass
+
+Now that we know how we store our parameters, let's move onto activation memory.
+
+Activation memory can be calculated a little differently than how we calculated memory for storing our parameters. The formula follows:
+
+$$
+m_{\text{act}} = L \cdot \text{seq} \cdot \text{bs} \cdot h \cdot \left(3/4 + \frac{5 \cdot n_{\text{heads}} \cdot \text{seq}}{h}\right)
+$$
+
+Where: 
+
+*L* = number of layers, 
+*seq* = sequence length, 
+*bs* = batch size, 
+*h* = hidden dimensions, 
+$n_{\text{heads}}$ = number of heads
+
+Memory usage is not static for a given model; rather, it scales linearly with the batch size and quadratically with the sequence length. Activation memory is the part that will blow up when we increase our batch size or train with longer sequences.
+![[Screenshot 2026-01-19 at 2.54.09 PM.png]]
+
+ For short sequences (or small batch sizes), memory usage for activations is almost negligible, but from around 2-4k tokens they start to take up a significant amount of memory, while usage for parameters, gradients, and optimizer states  is roughly independent of the sequence length and batch size.
+
+# Activation Recomputation
+Activation Recomputation is also known as gradient checkpointing. The general idea behind activation recomputation is to discard some activations during the forward pass to save memory and spend some extra compute to recompute these on the fly during the backward pass.
+![[Screenshot 2026-01-19 at 3.08.38 PM.png]]
+Instead of storing every single activation, we discard some of the activations, and then recompute on the fly. This adds computation, but saves memory.
+
+There are a few strategies for selecting key activations to store:
+
+- **Full**: Checkpoint activations at the transition point between each layer of the Transformer model.Requires a forward pass through each layer, essentially adding a full forward pass during the backward pass. Saves the most memory but is the most expensive one in terms of compute. It typically increases the compute cost and time by up to 30-40%
+- **Selective**: Discard the attention computations. Focus on checkpointing the expensive feedforward computations. **70% activation memory reduction at a 2.7% compute cost**.
+
+**Activation recomputation slightly increases the number of FLOPS due to recomputation, while it significantly reduces memory access overhead.**
+
+This trade-off is particularly advantageous on hardware with limited high-speed memory, like GPUs, as accessing memory is typically slower than performing computations. Despite the additional operations involved, the overall effect is thus often faster computation, in addition to the much lower memory footprint.
+
+
