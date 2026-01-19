@@ -77,12 +77,12 @@ This term counts *per-layer parameters*, then multiplies by `L`. (How many param
 **3. LayerNorm Parameters**
 $$
 2h
-g$$
+$$
 Per layer:
 - LayerNorm scale (γ): `h`
 - LayerNorm bias (β): `h`
 
-Memory requirements for the parameters and gradients are determined by multiplying the number of parameters by the number of bytes per parameter. Full precision (FP32) training, both parameters and gradients require 4 bytes while the optimizer, if we use Adam, requires the momentum and variance to be stored, adding another 8 bytes per parameter
+Memory requirements for the parameters and gradients are determined by multiplying the number of parameters by the number of bytes per parameter. In full precision (FP32) training, both parameters and gradients require 4 bytes while the optimizer, if we use Adam, requires the momentum and variance to be stored, adding another 8 bytes per parameter
 
 Mathematically, that is:
 $$
@@ -109,11 +109,7 @@ m_{\text{params\_fp32}} &= 4 \cdot N \\
 m_{\text{opt}} &= (4 + 4) \cdot N
 \end{aligned}
 $$
-Mixed precision doesn't directly reduce memory, it adds 4 bytes of data over full precision. It instead provides two massive advantages:
+Mixed precision doesn't directly reduce memory, it adds 4 bytes of data over full precision. It instead provides three massive advantages:
 1. Compute the forward/backward passes in half precision
 2. Allows us to use optimized lower precision operations on the GPU, which are faster
 3. Reduces the activation memory requirements during the forward pass
-
-
-
-  
