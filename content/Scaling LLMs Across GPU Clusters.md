@@ -77,3 +77,4 @@ $$2h$$
 Per layer:
 - LayerNorm scale (γ): `h`
 - LayerNorm bias (β): `h`
+
