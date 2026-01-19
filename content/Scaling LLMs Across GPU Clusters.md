@@ -21,8 +21,9 @@ bst = bs \cdot t
 $$
 The sweet spot for LLM training is 4-60 million tokens.
 
-llama1: bs ~ 4 million tokens; 1.4 trillion total tokens
-deepseekR1: bs ~ 60 million tokens; 14 trillion total tokens
+`llama1: bs ~ 4 million tokens; 1.4 trillion total tokens`
+
+`deepseekR1: bs ~ 60 million tokens; 14 trillion total tokens`
 
 
 The first problem we run into **Out Of Memory(OOM)** issues. What should we do when our GPU doesn’t have enough memory to hold a full batch of our target batch size?
@@ -143,10 +144,21 @@ Instead of storing every single activation, we discard some of the activations, 
 There are a few strategies for selecting key activations to store:
 
 - **Full**: Checkpoint activations at the transition point between each layer of the Transformer model.Requires a forward pass through each layer, essentially adding a full forward pass during the backward pass. Saves the most memory but is the most expensive one in terms of compute. It typically increases the compute cost and time by up to 30-40%
+
+
 - **Selective**: Discard the attention computations. Focus on checkpointing the expensive feedforward computations. **70% activation memory reduction at a 2.7% compute cost**.
 
 **Activation recomputation slightly increases the number of FLOPS due to recomputation, while it significantly reduces memory access overhead.**
 
 This trade-off is particularly advantageous on hardware with limited high-speed memory, like GPUs, as accessing memory is typically slower than performing computations. Despite the additional operations involved, the overall effect is thus often faster computation, in addition to the much lower memory footprint.
 
+
+# Gradient Accumulation
+Gradient accumulation is a very straightforward method that consists of splitting a batch into micro-batches. Perform forward and backward passes successively on each micro-batch, compute the gradients, and then sum the gradients of all micro-batches before we perform optimization.
+![[Screenshot 2026-01-19 at 3.41.54 PM.png]]
+Gradient accumulation allows us to reduce activation memory by processing smaller micro-batches sequentially. This reduces stored activations and gradients since only one micro-batch's worth of activations needs to be kept in memory at a time.
+
+However, gradient accumulation requires multiple consecutive forward/backward passes per optimization step, thereby increasing the compute overhead and slowing down training. Another thing, we can also do is we can do the forward pass and backward pass of each microbatch in parallel without waiting for each batch. Leading us to ...
+
+# Data Parallelism
 
