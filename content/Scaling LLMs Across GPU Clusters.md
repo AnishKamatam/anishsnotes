@@ -161,4 +161,26 @@ Gradient accumulation allows us to reduce activation memory by processing smalle
 However, gradient accumulation requires multiple consecutive forward/backward passes per optimization step, thereby increasing the compute overhead and slowing down training. Another thing, we can also do is we can do the forward pass and backward pass of each microbatch in parallel without waiting for each batch. Leading us to ...
 
 # Data Parallelism
+Data parallelism (DP) simply put replicates the model on several GPUs (we call the replicas “model instances”) and run forward and backward passes on different micro-batches of data in parallel on each GPU.
+![[Pasted image 20260119155418.png]]
 
+Different micro-batch for each GPU means we’ll have different gradients on each GPU, so to keep the model instances in sync across the different GPUs, we average the gradients from the model instances via “all-reduce.” This operation takes place during the backward pass, before the optimizer step.
+
+![[Screenshot 2026-01-19 at 3.59.40 PM.png]]
+
+The naive implementation of "all-reduce" is to wait for all backward passes to finish, so that we have all the gradients, then trigger an all-reduce over all the DP ranks to sync the gradients. This is horrible and leads to GPU's just sitting around doing nothing! **SUPER BAD**.
+
+A better way to do this operation is to sync them as each gradient is computed. For example, as soon as the backward pass of the last layer is complete, those gradients can already be gathered and summed while the backward computations continue for earlier layers, moving toward the left. Here's what that looks like:
+![[Screenshot 2026-01-19 at 4.23.20 PM.png]]
+
+Our next step derives from the fact that, GPU operations are usually more efficient when performed on large tensors, rather than having many operations running on smaller tensors. Group gradients into “buckets” and launch a single all-reduce for all the gradients within the same bucket instead of performing independent all-reduce operations for each gradient. Here's what that looks like:
+![[Screenshot 2026-01-19 at 4.45.59 PM.png]]
+Think of it like packing items into boxes before shipping them. It's more efficient to send a few big boxes than many small ones. By performing a single all-reduce operation for each bucket, we can significantly reduce the communication overhead and speed up the communication operation.
+
+
+Here's everything we've gone through so far:
+
+1. We first determine the best (global) batch size in tokens, either by consulting the literature or by running experiments measuring model convergence.
+2. We then select a sequence length for training, again by either consulting the literature or running experiments. Generally, 2-8k tokens works reliably well for the evaluation benchmarks we have today.
+3. We now know the batch size (*gbs*). We can find the maximum local batch size (mbsmbs) on a single GPU by increasing the local batch size until we run out of memory.
+4. Finally, we determine the number of available GPUs for our target *dp*. The ratio of *gbs* to *dp* gives us the remaining number of gradient accumulation steps needed for the desired *gbs*.
