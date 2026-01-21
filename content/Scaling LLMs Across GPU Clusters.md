@@ -134,7 +134,7 @@ $n_{\text{heads}}$ = number of heads
 Memory usage is not static for a given model; rather, it scales linearly with the batch size and quadratically with the sequence length. Activation memory is the part that will blow up when we increase our batch size or train with longer sequences.
 ![[Screenshot 2026-01-19 at 2.54.09 PM.png]]
 
- For short sequences (or small batch sizes), memory usage for activations is almost negligible, but from around 2-4k tokens they start to take up a significant amount of memory, while usage for parameters, gradients, and optimizer states  is roughly independent of the sequence length and batch size.
+For short sequences (or small batch sizes), memory usage for activations is almost negligible, but from around 2-4k tokens they start to take up a significant amount of memory, while usage for parameters, gradients, and optimizer states is roughly independent of the sequence length and batch size.
 
 # Activation Recomputation
 Activation Recomputation is also known as gradient checkpointing. The general idea behind activation recomputation is to discard some activations during the forward pass to save memory and spend some extra compute to recompute these on the fly during the backward pass.
@@ -143,7 +143,7 @@ Instead of storing every single activation, we discard some of the activations, 
 
 There are a few strategies for selecting key activations to store:
 
-- **Full**: Checkpoint activations at the transition point between each layer of the Transformer model.Requires a forward pass through each layer, essentially adding a full forward pass during the backward pass. Saves the most memory but is the most expensive one in terms of compute. It typically increases the compute cost and time by up to 30-40%
+- **Full**: Checkpoint activations at the transition point between each layer of the Transformer model. It requires a forward pass through each layer, essentially adding a full forward pass during the backward pass. Saves the most memory but is the most expensive one in terms of compute. It typically increases the compute cost and time by up to 30-40%
 
 
 - **Selective**: Discard the attention computations. Focus on checkpointing the expensive feedforward computations. **70% activation memory reduction at a 2.7% compute cost**.
@@ -158,7 +158,7 @@ Gradient accumulation is a very straightforward method that consists of splittin
 ![[Screenshot 2026-01-19 at 3.41.54 PM.png]]
 Gradient accumulation allows us to reduce activation memory by processing smaller micro-batches sequentially. This reduces stored activations and gradients since only one micro-batch's worth of activations needs to be kept in memory at a time.
 
-However, gradient accumulation requires multiple consecutive forward/backward passes per optimization step, thereby increasing the compute overhead and slowing down training. Another thing, we can also do is we can do the forward pass and backward pass of each microbatch in parallel without waiting for each batch. Leading us to ...
+However, gradient accumulation requires multiple consecutive forward/backward passes per optimization step, thereby increasing the compute overhead and slowing down training. Another approach is to perform the forward pass and backward pass of each microbatch in parallel without waiting for each batch. This leads us to ...
 
 # Data Parallelism
 Data parallelism (DP) simply put replicates the model on several GPUs (we call the replicas “model instances”) and run forward and backward passes on different micro-batches of data in parallel on each GPU.
@@ -173,7 +173,7 @@ The naive implementation of "all-reduce" is to wait for all backward passes to f
 A better way to do this operation is to sync them as each gradient is computed. For example, as soon as the backward pass of the last layer is complete, those gradients can already be gathered and summed while the backward computations continue for earlier layers, moving toward the left. Here's what that looks like:
 ![[Screenshot 2026-01-19 at 4.23.20 PM.png]]
 
-Our next step derives from the fact that, GPU operations are usually more efficient when performed on large tensors, rather than having many operations running on smaller tensors. Group gradients into “buckets” and launch a single all-reduce for all the gradients within the same bucket instead of performing independent all-reduce operations for each gradient. Here's what that looks like:
+Our next step derives from the fact that GPU operations are usually more efficient when performed on large tensors, rather than having many operations running on smaller tensors. Group gradients into “buckets” and launch a single all-reduce for all the gradients within the same bucket instead of performing independent all-reduce operations for each gradient. Here's what that looks like:
 ![[Screenshot 2026-01-19 at 4.45.59 PM.png]]
 Think of it like packing items into boxes before shipping them. It's more efficient to send a few big boxes than many small ones. By performing a single all-reduce operation for each bucket, we can significantly reduce the communication overhead and speed up the communication operation.
 
@@ -182,5 +182,52 @@ Here's everything we've gone through so far:
 
 1. We first determine the best (global) batch size in tokens, either by consulting the literature or by running experiments measuring model convergence.
 2. We then select a sequence length for training, again by either consulting the literature or running experiments. Generally, 2-8k tokens works reliably well for the evaluation benchmarks we have today.
-3. We now know the batch size (*gbs*). We can find the maximum local batch size (mbsmbs) on a single GPU by increasing the local batch size until we run out of memory.
+3. We now know the batch size (*gbs*). We can find the maximum local batch size (*mbs*) on a single GPU by increasing the local batch size until we run out of memory.
 4. Finally, we determine the number of available GPUs for our target *dp*. The ratio of *gbs* to *dp* gives us the remaining number of gradient accumulation steps needed for the desired *gbs*.
+
+If the gradient accumulation ratio is lower than 1 - i.e., we have too many GPUs/are GPU-rich - we can either choose not to use all our GPUs, explore a larger *gbs*, or test if a lower *mbs* will speed up training. In the latter case we’ll end up prioritizing throughput over individual GPU compute efficiency, using a smaller *mbs* than possible in order to speed up training.
+
+Data parallelism starts to have some limiting communication overhead above a certain level of scaling.
+
+There are two main approaches to splitting: parallelism (tensor, context, or pipeline parallelism) and sharding (DeepSpeed ZeRO or PyTorch FSDP).
+
+
+### Zero Redundancy Optimizer (ZeRO)
+
+While data parallelism is an efficient way to scale training, the naive replication of optimizer states, gradients, and parameters across each DP rank introduces significant memory redundancy. ZeRO eliminates this by partitioning the optimizer states, gradients, and parameters across the data parallel dimension, while still allowing computation with the full set of parameters.
+
+This approach is organized into three possible optimization stages:
+- ZeRO-1: optimizer state partitioning
+- ZeRO-2: optimizer state + gradient partitioning
+- ZeRO-3: optimizer state + gradient + parameter partitioning
+
+
+Given model's parameter count `Ψ` (previously `N`):
+- Model’s parameters (half precision; i.e., BF16/FP16): 2Ψ
+- Model’s gradients (half precision; i.e., BF16/FP16): 2Ψ
+- Model’s parameters in FP32 and optimizer states: 4Ψ+(4Ψ+4Ψ)
+- Model’s gradients in FP32: 4Ψ (optional, only included if we want to accumulate gradients in FP32)
+
+The idea of ZeRO is to shard these objects across the DP ranks, with each node only storing a slice of the items. These slices are then reconstructed when and if needed, thereby dividing memory usage by the data parallel degree.
+
+![[Screenshot 2026-01-20 at 4.51.21 PM.png]]
+
+In vanilla DP, all ranks gather the same gradients after the backward pass and simultaneously perform identical optimizer steps. In ZeRO-1, optimizer states are sharded across data-parallel ranks. Given a data-parallel degree $N_d$, each rank stores and updates only a $\frac{1}{N_d}$ fraction of the optimizer states. Consequently, during the optimization step, only $\frac{1}{N_d}$ of the FP32 parameters are updated per rank.
+
+However, during the forward pass, each data-parallel replica must hold the complete model parameters. Since only a $\frac{1}{N_d}$ shard of the FP32 weights is updated on each rank during optimization, an additional *all-gather* operation is required after the optimizer step to assemble the full set of updated parameters on every replica.
+
+A single training step proceeds as follows. First, each data-parallel replica performs a forward pass using the same full set of BF16 model parameters, but on different micro-batches of data. Next, each replica executes a backward pass, producing gradients corresponding to its local micro-batch. These gradients are then aggregated across replicas using a *reduce-scatter* collective operation. *Reduce-scatter* is a collective communication operation that aggregates tensors across all data-parallel replicas (e.g., via summation) and returns only a disjoint $\frac{1}{N_d}$ shard of the reduced result to each replica.
+
+
+Each replica subsequently performs an optimizer step using only its local shard of the optimizer states, corresponding to a $\frac{1}{N_d}$ fraction of the full optimizer state, where $N_d$ denotes the data-parallel degree. This yields an updated $\frac{1}{N_d}$ subset of the FP32 parameters, which are then cast to BF16. Finally, an *all-gather* operation is applied to the BF16 parameters to reconstruct the full set of updated model parameters on every replica. This additional all-gather is specific to ZeRO-style training and is not required in vanilla data parallelism.
+
+![[Screenshot 2026-01-21 at 2.46.55 PM.png]]
+
+It's like fragmenting it and the piecing it all together like puzzle pieces!
+
+In ZeRO-1, we can also investigate how to efficiently overlap the newly added all-gather of BF16 parameters. There are two main strategies for this:
+
+- **During the optimizer step:** We can initiate the all-gather immediately after the optimizer updates the first slice of the parameters. This allows the communication to potentially overlap with the updating of the other parameters.
+- **During the forward pass:** We can overlap the all-gather of each layer’s parameters with the forward pass.
+
+
