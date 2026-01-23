@@ -218,7 +218,6 @@ However, during the forward pass, each data-parallel replica must hold the compl
 
 A single training step proceeds as follows. First, each data-parallel replica performs a forward pass using the same full set of BF16 model parameters, but on different micro-batches of data. Next, each replica executes a backward pass, producing gradients corresponding to its local micro-batch. These gradients are then aggregated across replicas using a *reduce-scatter* collective operation. *Reduce-scatter* is a collective communication operation that aggregates tensors across all data-parallel replicas (e.g., via summation) and returns only a disjoint $\frac{1}{N_d}$ shard of the reduced result to each replica.
 
-
 Each replica subsequently performs an optimizer step using only its local shard of the optimizer states, corresponding to a $\frac{1}{N_d}$ fraction of the full optimizer state, where $N_d$ denotes the data-parallel degree. This yields an updated $\frac{1}{N_d}$ subset of the FP32 parameters, which are then cast to BF16. Finally, an *all-gather* operation is applied to the BF16 parameters to reconstruct the full set of updated model parameters on every replica. This additional all-gather is specific to ZeRO-style training and is not required in vanilla data parallelism.
 
 ![[Screenshot 2026-01-21 at 2.46.55 PM.png]]
@@ -229,5 +228,25 @@ In ZeRO-1, we can also investigate how to efficiently overlap the newly added al
 
 - **During the optimizer step:** We can initiate the all-gather immediately after the optimizer updates the first slice of the parameters. This allows the communication to potentially overlap with the updating of the other parameters.
 - **During the forward pass:** We can overlap the all-gather of each layer’s parameters with the forward pass.
+
+ZeRO-2 extends ZeRO-1 by sharding gradients across data-parallel ranks. Since each rank only updates a $\frac{1}{N_d}$ shard of the optimizer states, it only requires the corresponding $\frac{1}{N_d}$ shard of the gradients. Thus, during the backward pass, gradients are aggregated using a *reduce-scatter* operation instead of an *all-reduce*, reducing memory usage relative to ZeRO-1.
+
+![[Screenshot 2026-01-21 at 4.22.21 PM.png]]
+
+Thus, while ZeRO-2 significantly reduces memory consumption through gradient partitioning, it does not increase communication volume relative to standard data-parallel training.
+
+![[Screenshot 2026-01-21 at 4.23.09 PM.png]]
+
+In ZeRO-3, optimizer states, gradients, and model parameters are fully sharded across data-parallel replicas. Since no replica stores the complete set of parameters, parameters are all-gathered on demand during computation. During the forward pass, parameters for each layer are gathered just before use and immediately released afterward, while the backward pass follows the same process in reverse order, producing sharded gradients.
+
+Compared to ZeRO-2, ZeRO-3 introduces additional communication overhead due to frequent parameter all-gathers, resulting in approximately $2 \cdot \text{num\_layers} - 1$ extra all-gather operations per training step. Each training step incurs three communication phases: an all-gather for parameters during the forward pass, an all-gather during the backward pass, and a reduce-scatter for gradients, yielding a total communication cost of $3\Psi$, compared to $2\Psi$ for ZeRO-2.
+
+This overhead is mitigated through prefetching, which overlaps communication with computation by all-gathering parameters for the next layer while executing the current layer. Prefetching is effective as long as the data-parallel degree remains moderate (typically $N_d \lesssim 512$). In terms of memory, ZeRO-3 achieves maximal parameter sharding, reducing model-related memory usage proportionally to $\frac{1}{N_d}$, though activation memory remains unchanged and must be addressed separately via techniques such as activation checkpointing and gradient accumulation.
+
+Data parallelism does not reduce activation memory per replica unless the per-replica microbatch size is reduced, in which case activation memory scales proportionally with the microbatch size.
+
+Our next trick is called **Tensor Parallelism**
+
+# Tensor Parallelism
 
 
