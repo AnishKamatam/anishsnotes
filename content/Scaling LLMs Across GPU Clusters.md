@@ -378,3 +378,26 @@ However, these operations sit in the **critical path** of the forward pass and c
 
 - **Performance Wall:** Just like vanilla TP, TP+SP is most effective within a single node (TP $\leq$ 8). Moving across nodes (e.g., TP=16) results in a massive throughput drop as communication shifts from NVLink to inter-node networking.
 
+
+# Sequence Parallelism
+
+When scaling models to handle massive sequence lengths, such as 128k or more tokens, even the combination of Tensor Parallelism and Sequence Parallelism hits a limit. This occurs because the full sequence must still be processed when inside a TP region, and even with activation recomputation, memory usage at layer boundaries continues to scale linearly with the sequence length. Context Parallelism addresses this by sharding the sequence dimension across the entire model, including the regions typically handled by Tensor Parallelism.
+
+The core idea of Context Parallelism is to split the input along the sequence dimension for the full duration of the model computation. For most modules like the MLP and LayerNorm, this process is intuitive because tokens are processed independently. Splitting the sequence for these layers does not require expensive communication like TP because only the inputs are split rather than the weight matrices. Just as with Data Parallelism, an all-reduce operation is initiated after computing gradients to synchronize them across the CP group.
+
+The primary challenge lies in the attention blocks where each token needs to access key and value pairs from other sequence tokens to compute correctly. Because Context Parallelism distributes these inputs across GPUs, the attention module requires full communication between devices to exchange the necessary data. To handle this efficiently without high costs, a technique called Ring Attention is used. This enables the communication of key and value pairs by passing them in a circular fashion between GPUs to maintain performance while processing massive context windows
+
+### Ring Attention 
+
+In this implementation of the attention mechanism, each GPU first initiates an asynchronous communication operation to send its key and value pairs to other GPUs. While waiting for the other GPUs' data, it computes the attention score for the portion of the data it already has in memory. Ideally, the next key and value pair is received from another GPU before this computation finishes, allowing the GPU to start the next round of computation immediately after it finishes its first computation.
+
+For a setup with four GPUs and an input of four tokens, the input sequence is split evenly along the sequence dimension so each GPU has one token along with its corresponding Q, K, and V values. The attention calculation takes four time steps to complete, and at each time step, each GPU performs three successive operations:
+Here's what that looks like: 
+
+![[Pasted image 20260124131724.png]]
+- The GPU sends current keys and values to the next machine in a non-blocking manner.
+- The GPU locally computes the attention score on the current keys and values, which involves performing $Softmax(\frac{QK^T}{\sqrt{d}})V$.
+- The GPU waits to receive keys and values from the previous GPU and then circles back to the first step.
+
+A significant problem with a naive implementation of Ring Attention is the strong imbalance between GPUs caused by the shape of the causal attention matrix. Softmax is computed row-wise, meaning a GPU can only compute it once it has received all the tokens of a row. In this scenario, the first GPU can compute immediately as it starts with the necessary tokens, but the second GPU must wait for the second round to receive enough information, resulting in the first GPU performing much less work than the others.
+
