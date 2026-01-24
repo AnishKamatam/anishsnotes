@@ -249,4 +249,132 @@ Our next trick is called **Tensor Parallelism**
 
 # Tensor Parallelism
 
+While **ZeRO** effectively shards model parameters, gradients, and optimizer states, large-scale models often hit a "memory wall" when **activation memory** exceeds the available GPU budget.
+
+**Tensor Parallelism (TP)** addresses this by sharding weights, gradients, optimizer states, _and_ activations across multiple devices. Unlike ZeRO, which requires gathering sharded data before computation, TP performs the computation on sharded data directly.
+## The Mathematical Foundation
+
+Tensor parallelism leverages the distributive properties of matrix multiplication ($A \times B$). To understand how it works, let's examine the two fundamental ways to shard a matrix product:
+### 1. Column Parallelism
+
+We can split matrix $B$ by columns. This allows each device to compute a portion of the output independently.
+
+$$A \cdot B = A \cdot [B_1, B_2, \dots] = [AB_1, AB_2, \dots]$$
+### 2. Row Parallelism
+
+We can split matrix $A$ by columns and matrix $B$ by rows. The final result is the sum of the partial products.
+
+$$A \cdot B = [A_1, A_2, \dots] \begin{bmatrix} B_1 \\ B_2 \\ \vdots \end{bmatrix} = \sum_{i=1}^{n} A_i B_i$$
+
+---
+
+## Application in Neural Networks
+
+In the context of a Transformer or a standard feed-forward layer, we typically represent matrix multiplication as $X \times W$, where:
+
+- **$X$ (Activations):** Represent the input values or hidden states.
+    
+- **$W$ (Weights):** Represent the learnable parameters of the Linear layer.
+    
+
+### How TP applies to $X \times W$:
+
+1. **Column Parallel Approach:** We shard the weight matrix $W$ vertically. Each GPU receives the full input $X$ but only a portion of the weights ($W_{col}$), producing a shard of the output activations.
+    
+2. **Row Parallel Approach:** We shard the weight matrix $W$ horizontally. Each GPU receives only a portion of the input $X$ (sharded by columns) that corresponds to its weight shard ($W_{row}$), and the results are summed via an `AllReduce` operation.
+    
+
+> **Key Advantage:** By sharding the weights and the resulting output, the memory footprint of the activations is distributed across all participating GPUs, effectively breaking the activation memory bottleneck.
+
+### Strategic Integration in Transformer Blocks
+
+In a real-world Transformer, we combine these two methods within the MLP and Attention blocks to minimize communication overhead.
+
+For the **MLP block**, the most efficient schema is a **Column-Linear layer followed by a Row-Linear layer**. This configuration is highly effective because it requires only one "exposed" synchronization point (the All-Reduce) at the very end of the block. The intermediate activations stay sharded, which prevents unnecessary communication.
+
+The **Multi-Head Attention (MHA)** block follows a similar logic. We shard the Query (Q), Key (K), and Value (V) projections column-parallelly, allowing each GPU to independently handle a subset of attention heads. The output projection then acts as the row-linear layer to combine them. This naturally scales with the number of heads; for example, a model with 32 heads can theoretically scale to a TP degree of 32. However, for architectures like **Grouped Query Attention (GQA)**, where there are fewer Key/Value heads than Query heads (as seen in Llama-3), extra care is needed to keep the K/V heads synchronized across the TP ranks.
+
+### Performance Trade-offs and the "NVLink Wall"
+
+Tensor parallelism is not a "free" gain. Because communication primitives like All-Reduce sit directly in the critical path of the forward pass, they cannot be easily hidden or overlapped with computation like the communications in ZeRO-3.
+
+While increasing the TP degree reduces the memory footprint per GPU—allowing us to fit massive 70B+ parameter models on a single node—it significantly impacts throughput. Within a single node (up to 8 GPUs), TP is highly performant because it utilizes high-speed **NVLink** interconnects. However, scaling TP across nodes (TP > 8) forces communication over standard network interfaces, leading to a steep decline in efficiency.
+
+### Refinements and Limitations
+
+Even with TP, some operations like **Layer Normalization** and **Dropout** traditionally require gathering full activations, which can limit potential memory savings. Interestingly, LayerNorm weights do not require gradient synchronization because every TP rank sees the same input after the All-Gather and naturally stays in sync. Conversely, Dropout requires explicit random seed synchronization to ensure deterministic behavior across the sharded ranks.
+
+Ultimately, TP is a trade-off: you sacrifice a portion of your raw per-GPU throughput to unlock the ability to process much larger batch sizes and models that would otherwise be impossible to fit in memory.
+
+# Sequence Parallelism
+
+While Tensor Parallelism (TP) shards the heavy matrix multiplications (MLP and Attention) along the hidden dimension, it leaves certain operations—like **LayerNorm** and **Dropout**—duplicated across GPUs. These operations require the full hidden dimension to compute statistics like mean and variance correctly. Consequently, in vanilla TP, every GPU still stores a full copy of the activations for these layers, creating a memory bottleneck as sequence lengths grow.
+
+**Sequence Parallelism** solves this by sharding these "non-parallel" operations along the **sequence dimension** rather than the hidden dimension.
+
+### The Mechanism: Shifting Dimensions
+
+In a TP+SP configuration, the model alternates between two types of regions:
+
+1. **SP Regions (LayerNorm/Dropout):** Activations are sharded along the sequence length ($s/TP$). Each GPU processes its own chunk of tokens independently.
+
+2. **TP Regions (Linear Layers):** Activations must be gathered to the full sequence length ($s$) because the weights are sharded along the hidden dimension ($h/TP$).
+
+The following diagram illustrates how a standard Transformer block is divided into these regions and the specific collective operations ($g$ and $g^*$) used to bridge them:
+
+![[Pasted image 20260124105846.png]]
+
+### Transitioning with Conjugate Pairs
+
+To move between these regions efficiently, we use specific communication primitives that ensure correctness while keeping peak memory usage low:
+
+- **From SP to TP ($g$ - All-Gather):** Before a linear layer, we use an **All-Gather** to combine the sequence shards ($s/TP \to s$). This restores the full sequence needed for column-linear layers to compute the hidden dimension.
+    
+- **From TP to SP ($g^*$ - Reduce-Scatter):** After a row-parallel linear layer, instead of a standard All-Reduce, we use a **Reduce-Scatter**. This sums the partial results for correctness while simultaneously scattering them back along the sequence dimension ($s \to s/TP$).
+    
+
+These operations are "conjugate pairs". In the forward pass, if the transition is an All-Gather, it becomes a Reduce-Scatter in the backward pass to synchronize gradients.
+
+### Activation Memory Impact
+
+The primary advantage of SP is the drastic reduction in peak activation memory. By ensuring that activations are _always_ sharded—either by the hidden dimension (in TP regions) or the sequence dimension (in SP regions)—the maximum activation size is reduced to $b \cdot s \cdot h / TP$.
+
+This allows for significantly longer context windows. For a 70B model, adding SP to TP=16 can enable sequence lengths of 16k tokens that would otherwise trigger "Out of Memory" (OOM) errors.
+
+### Communication Costs and Trade-offs
+
+A common concern is whether SP adds more overhead than vanilla TP. Mathematically, one **All-Reduce** (used in TP) is equivalent in cost to one **All-Gather** plus one **Reduce-Scatter** (used in SP), so the total data transferred is identical.
+
+However, these operations sit in the **critical path** of the forward pass and cannot be easily overlapped with computation. The following profile shows how these communication steps (AG and RS) create synchronization points that the GPU must wait for:
+
+![[Screenshot 2026-01-24 at 10.59.28 AM.png]]
+
+**Enter TP (Column-Linear Layers)**
+- **TP only**
+  - Hidden dimension ($h$): sharded
+  - Sequence length ($s$): full
+- **TP + SP**
+  - Hidden dimension ($h$): sharded
+  - Sequence length ($s$): All-Gathered to full
+
+**Exit TP (Row-Linear Layers)**
+- **TP only**
+  - Hidden dimension ($h$): full (via All-Reduce)
+  - Sequence length ($s$): full
+- **TP + SP**
+  - Hidden dimension ($h$): full
+  - Sequence length ($s$): Reduce-Scattered to sharded
+
+**SP Region (LayerNorm / Dropout / Residuals)**
+- **TP only**
+  - Hidden dimension ($h$): full
+  - Sequence length ($s$): full
+- **TP + SP**
+  - Hidden dimension ($h$): full
+  - Sequence length ($s$): sharded
+### Implementation Nuance
+
+- **LayerNorm Gradients:** Because each TP rank in the SP region operates on different portions of the sequence, their gradients will differ. To keep weights synchronized, we must All-Reduce their gradients during the backward pass.
+
+- **Performance Wall:** Just like vanilla TP, TP+SP is most effective within a single node (TP $\leq$ 8). Moving across nodes (e.g., TP=16) results in a massive throughput drop as communication shifts from NVLink to inter-node networking.
 
