@@ -474,3 +474,26 @@ Benchmarks demonstrate that 1F1B is particularly effective for multi-node traini
 
 This resilience to lower-bandwidth inter-node connections makes Pipeline Parallelism with 1F1B one of the most attractive strategies for distributing massive models across large clusters.
 
+While the 1F1B schedule improves memory usage, it does not reduce the idle pipeline bubble. To further minimize this wasted time, we can implement **Interleaved Stages**, which involves slicing model layers across GPUs in a non-sequential manner. Instead of hosting layers 1-4 on GPU 1 and 5-8 on GPU 2, we might distribute layers such that each GPU handles multiple "virtual stages" throughout the model's depth.
+
+### The Looping Pipeline
+
+This configuration creates a "looping pipeline" where a micro-batch moves between GPUs multiple times to complete a single forward or backward pass. While this increases the number of communication operations, it allows for much tighter interleaving of forward and backward steps.
+
+![[Screenshot 2026-01-24 at 6.02.17 PM.png]]
+
+The efficiency gain can be quantified by looking at the reduction in bubble time, where v is the number of virtual stages (model chunks) per GPU:
+
+-  **Bubble Time**: $t_{pb} = \frac{(p-1) \times (t_f + t_b)}{v}$.
+- **Bubble Ratio**: $r_{bubble} = \frac{p-1}{v \times m}$.
+
+By adding interleaved stages, the bubble is decreased by a factor of v, though this is a trade-off as total communication also increases by that same factor.
+### Scheduling Strategies
+
+Interleaved pipelines introduce significant scheduling complexity. At any given moment, a GPU must decide between two priorities:
+
+- **Depth-First**: Prioritizes earlier micro-batches in later layers to finish the full pass as fast as possible.
+- **Breadth-First**: Prioritizes later micro-batches in earlier layers to keep the pipeline filled.
+
+Advanced models like Llama 3.1 utilize 1F1B setups with interleaved stages and tunable priority settings between these two approaches.
+
