@@ -497,3 +497,22 @@ Interleaved pipelines introduce significant scheduling complexity. At any given 
 
 Advanced models like Llama 3.1 utilize 1F1B setups with interleaved stages and tunable priority settings between these two approaches.
 
+
+While the interleaved 1F1B schedule significantly improves efficiency, even more sophisticated methods have recently been proposed to reach a "zero bubble" regime. These techniques, such as the **DualPipe** implementation used in DeepSeek-V3 and R1, aim to achieve near-zero all-to-all communication overhead by splitting model operations into even finer-grained components.
+
+### Decomposing the Backward Pass
+
+The core insight behind these "zero bubble" schedules is that a standard backward pass through a matrix multiplication actually consists of two separate operations:
+- **B (Backward for Inputs)**: Calculates the gradient with respect to the input, which is necessary for the backward pass of preceding layers.
+- **W (Backward for Weights)**: Calculates the gradient with respect to the weights, which only needs to be completed before the final optimizer step.
+
+![[Pasted image 20260125112035.png]]
+
+Because the weight gradient ($W$) is not required for the backward pass of lower layers, it can be flexibly scheduled at any point after the corresponding input gradient ($B$) of the same stage. This flexibility allows for the strategic placement of $W$ operations to fill the idle gaps that would otherwise form pipeline bubbles.
+
+### DualPipe and Bidirectional Streams
+
+DeepSeek’s **DualPipe** extends this decomposition further by introducing two simultaneous processing streams that propagate from both ends of the pipeline. These bidirectional streams are interleaved to further minimize idle time, creating a highly efficient but extremely complex scheduling graph.
+![[Pasted image 20260125112046.png]]
+Fully optimizing such schedules typically involves precisely measuring the duration of each fine-grained operation and solving an Integer Linear Programming (ILP) problem to minimize bubble time. While these implementations are too complex for simple code snippets, they represent the current frontier in eliminating the efficiency bottlenecks of pipeline parallelism.
+
