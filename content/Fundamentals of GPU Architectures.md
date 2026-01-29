@@ -15,8 +15,6 @@ GPU memory isn't a single flat space. It is a hierarchy dictated by circuit desi
 Since we cannot have a vast pool of ultra fast memory, designers use a hierarchy. They place a small amount of fast SRAM close to the compute units and back it with larger, slower pools of DRAM further away. This maximizes **throughput** by ensuring the math engines stay fed with data.
 
 In the H100 architecture, data travels through five main levels. As you move closer to the compute units, bandwidth increases by orders of magnitude while capacity shrinks.
-
-![[Pasted image 20260128132513.png]]
 ### 1. Device Memory (VRAM)
 This is the off-chip HBM (High Bandwidth Memory). It serves as the "Global Memory" for the GPU. It is physically separate from the GPU die but packaged on the same board. It is the largest pool but also the slowest.
 ### 2. L2 Cache
