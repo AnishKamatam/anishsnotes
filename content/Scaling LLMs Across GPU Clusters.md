@@ -405,6 +405,10 @@ There are two primary ways to manage the overlap of computation and communicatio
 - This is more memory-efficient as each GPU only needs to store one additional chunk temporarily.
 - Communication is spread out and overlapped with computation, though multiple communication steps introduce additional base latency
 
+### Combining Sequence Parallelism and Context Parallelism
+
+When combining Sequence Parallelism (SP) with Context Parallelism (Ring Attention), there is an important constraint: $\text{sp\_size} \times \text{ring\_size} = \text{num\_gpus}$, if either of them are set. This ensures that the total number of GPUs is properly partitioned between the two parallelism strategies.
+
 While Context Parallelism tames the activation explosion associated with long sequences, Tensor Parallelism remains difficult to scale across nodes. If model weights cannot fit on a single node, **Pipeline Parallelism** serves as the next degree of parallelism to resolve the bottleneck.
 
 ---
