@@ -15,15 +15,15 @@ GPU memory isn't a single flat space. It is a hierarchy dictated by circuit desi
 Since we cannot have a vast pool of ultra fast memory, designers use a hierarchy. They place a small amount of fast SRAM close to the compute units and back it with larger, slower pools of DRAM further away. This maximizes **throughput** by ensuring the math engines stay fed with data.
 
 In the H100 architecture, data travels through five main levels. As you move closer to the compute units, bandwidth increases by orders of magnitude while capacity shrinks.
-### 1. Device Memory (VRAM)
+#### 1. Device Memory (VRAM)
 This is the off-chip HBM (High Bandwidth Memory). It serves as the "Global Memory" for the GPU. It is physically separate from the GPU die but packaged on the same board. It is the largest pool but also the slowest.
-### 2. L2 Cache
+#### 2. L2 Cache
 This is a large SRAM cache built directly on the die. It is partitioned into two halves. Each Streaming Multiprocessor (SM) connects directly to one side and indirectly to the other through a crossbar.
-### 3. Distributed Shared Memory (DSMEM)
+#### 3. Distributed Shared Memory (DSMEM)
 This is a newer layer where groups of physically close SMs can pool their shared memory. It allows for efficient data exchange within a cluster of cores.
-### 4. L1 Cache and Shared Memory (SMEM)
+#### 4. L1 Cache and Shared Memory (SMEM)
 Each SM has its own private pool of fast SRAM. The hardware allows software to configure how much of this space is used as a traditional L1 cache versus programmer-managed "Shared Memory."
-### 5. Register File (RMEM)
+#### 5. Register File (RMEM)
 The fastest storage in the system. Registers sit right next to the compute units and are private to individual threads. On GPUs, the register file is massive, often equal in size to the L1/SMEM combined.
 
-**The Golden Rule:** Keep your most frequently used data in the registers or SMEM. Every trip back to Global Memory is a performance killer.
+>**The Golden Rule:** Keep your most frequently used data in the registers or SMEM. Every trip back to Global Memory is a performance killer.

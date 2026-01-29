@@ -3,6 +3,7 @@
 
 A **Transformer** is a neural network architecture that has fundamentally reshaped modern artificial intelligence. First introduced in the 2017 paper _“Attention Is All You Need”_, Transformers have become the dominant backbone of today’s most powerful AI systems. They power large language models such as OpenAI’s GPT series, Meta’s LLaMA, and Google’s Gemini, and have also proven effective far beyond text, spanning audio generation, computer vision, protein structure prediction, and even game playing.
 
+![[Pasted image 20260129151320.png]]
 At their core, text-generative Transformer models are trained to perform **next-token prediction**. Given a sequence of tokens, which can be words or sub-words, the model estimates the probability distribution over what token should come next. By repeatedly predicting one token at a time, Transformers are able to generate coherent paragraphs, write code, answer questions, and carry on conversations.
 
 What makes Transformers especially powerful is their use of the **self-attention mechanism**. Unlike earlier architectures such as recurrent neural networks, which process tokens sequentially, self-attention allows a Transformer to consider the entire input sequence at once. Each token can selectively attend to every other token, enabling the model to capture long-range dependencies, contextual relationships, and subtle patterns in language far more effectively.
@@ -36,10 +37,10 @@ This probability distribution represents the model’s belief about which token 
 ---
 
 ### Why this structure works
-
 - **Embeddings** convert language into a form the model can process.
 - **Attention layers** let tokens share information and build context.
 - **MLP layers** refine token representations individually.
 - **Output layers** translate learned representations into concrete predictions.
 
 This modular design is what allows Transformers to scale efficiently and generalize across many different tasks and domains.
+
