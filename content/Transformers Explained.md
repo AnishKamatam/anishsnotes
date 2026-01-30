@@ -82,5 +82,63 @@ Within each head, the model calculates attention while strictly following a caus
 #### 4. Output and Concatenation
 Finally, the model multiplies these probabilities by the **Value (V)** matrix to produce the head's output. The outputs from all attention heads are concatenated and passed through a linear projection to be sent to the next part of the block.
 
+# The Multi-Layer Perceptron (MLP)
+After the multi-head self-attention mechanism captures relationships between tokens, the concatenated outputs are passed into the **Multi-Layer Perceptron (MLP)** layer. While attention integrates information _across_ tokens, the MLP processes each token **independently**, mapping their representations into a new space to enrich the model's overall capacity.
+The MLP block typically follows a specific structure:
+
+![[Pasted image 20260129161642.png]]
+
+- **Expansion**: A linear transformation expands the input dimensionality four-fold (e.g., from a size of 768 to 3072). This projects the token into a higher-dimensional space to capture complex patterns.
+- **Activation**: A non-linear activation function, such as **GELU**, is applied between the linear layers.
+- **Projection**: A second linear transformation reduces the dimensionality back to the original size, retaining the useful non-linear transformations while making the representation manageable for the next block.
+---
+#### Output Probabilities and Token Prediction
+Once the data has been processed through all sequential Transformer blocks, it reaches the final output stage to determine the next token in the sequence.
+#### 1. Logit Generation
+The final representations are projected into a massive dimensional space corresponding to the size of the vocabulary. Each token in the vocabulary is assigned a raw score called a **logit**.
+#### 2. Softmax Transformation
+The model applies the **softmax** function to convert these logits into a probability distribution where all values sum to one. This allows for the ranking and sampling of the next token based on its likelihood.
+#### 3. Refined Sampling
+The generation process is controlled by several key hyperparameters that balance determinism and "creativity":
+- **Temperature**: The logits are divided by this value before softmax.
+	- **$T = 1$**: No effect on the distribution.
+	- **$T < 1$**: Makes the model more confident and deterministic (sharper distribution).    
+	- **$T > 1$**: Creates a softer distribution, allowing for more randomness and diversity. 
+- **Top-k Sampling**: Limits the candidates to the $k$ tokens with the highest probabilities.
+- **Top-p (Nucleus) Sampling**: Selects the smallest set of tokens whose cumulative probability exceeds a threshold $p$.
 
 
+### Auxiliary Architectural Features
+
+Several auxiliary features enhance the performance of Transformer models. While they are not the primary mechanisms for processing tokens, they are crucial for stabilizing the training phase and ensuring the model generalizes well to new data.
+
+---
+### Layer Normalization
+
+Layer Normalization stabilizes the training process and improves convergence by ensuring the mean and variance of activations remain consistent across features. This helps mitigate internal covariate shift, allowing the model to learn more effectively and reducing its sensitivity to initial weights.
+
+- In each Transformer block, Layer Normalization is applied twice.
+- It is positioned once before the self-attention mechanism.
+- It is positioned a second time before the MLP layer.
+### Dropout
+Dropout is a regularization technique used during training to prevent overfitting.
+- It works by randomly setting a fraction of model weights to zero, which forces the network to learn more robust features rather than depending on specific neurons.
+- This technique helps the network generalize better to unseen data.
+- During model inference, dropout is deactivated, effectively utilizing an ensemble of trained subnetworks for better performance.
+### Residual Connections
+Originally introduced in 2015, residual connections allow for the training of very deep neural networks by providing "shortcuts" that bypass layers. The input of a layer is added directly to its output.
+- This mechanism helps solve the vanishing gradient problem, ensuring that earlier layers receive sufficient updates during backpropagation.
+- Within each Transformer block, residual connections are utilized twice: once before the MLP and once after.
+- This architecture allows gradients to flow more easily through the stacked blocks of the model.
+
+
+### The Unified Transformer Workflow
+The Transformer represents a shift from sequential processing to a massive, parallelizable architecture driven by **contextual relevance**. By combining semantic embeddings, dynamic attention, and independent refinement layers, it creates a system capable of both understanding intricate language nuances and generating highly coherent content.
+The journey of a prompt through this architecture follows a precise, cyclical lifecycle:
+
+---
+### The Integrated Data Flow
+1. **Preparation (Embedding Layer)**: Raw text is transformed into a rich numerical landscape. **Tokenization** breaks the string into IDs, **Token Embeddings** map those IDs to semantic vectors, and **Positional Encodings** inject the "where" into the "what." This ensures the model starts with a representation that captures both meaning and order.
+2. **Synthesis (The Attention Head)**: Inside the first block, the **Self-Attention** mechanism creates a dialogue between tokens. Using **Queries, Keys, and Values**, each token determines which other parts of the sentence are most relevant to its own meaning. This is where the model resolves ambiguities—identifying, for instance, that "it" refers to "the ball" and not "the table."
+3. **Refinement (The MLP & Residuals)**: The **MLP** takes the context-aware tokens and processes them independently to deepen their individual representations. All the while, **Residual Connections** and **Layer Normalization** act as a high-speed infrastructure, preventing the signals from degrading as they move through dozens of sequential blocks.
+4. **Prediction (Output Head)**: The final representation is projected back into the vast space of the vocabulary. The **Softmax** function turns raw **logits** into a clear probability map. Through **Sampling** (governed by Temperature, Top-k, or Top-p), the model selects a single token and appends it to the input, restarting the entire cycle for the next word.
