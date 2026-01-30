@@ -68,7 +68,9 @@ Each token's input embedding is transformed into three distinct vectors, **Query
 - **Key (K):** The titles of the search results; represents the information a token "offers" to other queries.
 - **Value (V):** The actual content of the webpages; the data we extract once we find a match between a Query and a Key.
 
-$$QKV_{ij} = \left(\sum_{d=1}^{hidden\_size} Embedding_{i,d} \cdot Weights_{d,j}\right) + Bias_j$$
+$$
+QKV_{ij} = \left(\sum_{d=1}^{hidden\_size} Embedding_{i,d} \cdot Weights_{d,j}\right) + Bias_j
+$$
 
 #### 2. Multi-Head Splitting
 The Q, K, and V vectors are split into several heads. Each head independently processes a different segment of the embedding, allowing the model to learn diverse linguistic features in parallel.
@@ -79,4 +81,6 @@ Within each head, the model calculates attention while strictly following a caus
 - **Softmax & Dropout:** The scores are converted into probabilities via **Softmax**, so each row sums to 1.0, indicating exactly how much weight to give to preceding tokens.
 #### 4. Output and Concatenation
 Finally, the model multiplies these probabilities by the **Value (V)** matrix to produce the head's output. The outputs from all attention heads are concatenated and passed through a linear projection to be sent to the next part of the block.
+
+
 
